@@ -19,43 +19,87 @@
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
 <style>
+  /*
+    Paleta: sigue siendo "dos colores y un acento" — el dato (teal) y el
+    acento (ámbar, solo para lo que cambia). Nada de degradados ni 3D; la
+    profundidad viene de bordes muy sutiles y una sombra suave, no de
+    fondos con transición de color.
+  */
   :root{
-    --bg: #0a0e13;
-    --panel: #12181f;
+    --bg: #08090d;
+    --panel: #11161d;
     --line: #232c36;
-    --ink: #eef3f7;
+    --line-soft: rgba(255,255,255,.07);
+    --ink: #f3f6f8;
     --ink-dim: #8fa1b0;
-    --data: #4fb3ac;      /* color principal de datos */
-    --accent: #ffb347;    /* acento: solo para lo que cambia / vivo */
+    --muted: #647586;
+    --data: #24c7ab;        /* color principal de datos */
+    --data-soft: rgba(36,199,171,.14);
+    --accent: #ffb42e;      /* acento: solo para lo que cambia / vivo */
+    --accent-soft: rgba(255,180,46,.16);
     --bad: #e2574c;
+    --r-lg: 14px;
+    --r-md: 10px;
+    --r-sm: 7px;
   }
   *{ box-sizing: border-box; }
   html,body{
     margin:0; padding:0; height:100%; background:var(--bg); color:var(--ink);
-    font-family: "Segoe UI", Arial, sans-serif;
+    font-family: "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
     overflow:hidden;
+    -webkit-font-smoothing: antialiased;
   }
-  #app{ display:flex; flex-direction:column; height:100vh; padding: 18px 26px 14px; gap:14px; }
+  #app{ display:flex; flex-direction:column; height:100vh; padding: 20px 28px 18px; gap:16px; }
+
+  /* Tooltip liviano en CSS puro — se usa en las barras de los gráficos */
+  [data-tt]{ position:relative; }
+  [data-tt]:hover::after, [data-tt]:focus-visible::after{
+    content: attr(data-tt);
+    position:absolute; left:50%; bottom:100%; transform:translateX(-50%) translateY(-9px);
+    background:#1a222b; color:var(--ink); border:1px solid var(--line-soft);
+    padding:6px 10px; border-radius:7px; font-size:.76rem; white-space:nowrap;
+    pointer-events:none; z-index:30; box-shadow:0 8px 22px rgba(0,0,0,.4);
+  }
 
   /* Encabezado */
-  #topbar{ display:flex; align-items:baseline; justify-content:space-between; }
-  #topbar h1{ font-size: 1.3rem; font-weight:600; margin:0; letter-spacing:.5px; color:var(--ink); }
-  #status{ display:flex; align-items:center; gap:8px; font-size:.95rem; color:var(--ink-dim); }
-  #dot{ width:12px; height:12px; border-radius:50%; background:var(--ink-dim); transition: background .2s; }
-  #dot.live{ background:var(--data); }
-  #dot.flash{ background:var(--accent); }
+  #topbar{ display:flex; align-items:center; justify-content:space-between; }
+  #brand{ display:flex; align-items:center; gap:11px; }
+  .brand-mark{
+    width:28px; height:28px; border-radius:8px; flex:none;
+    background:var(--data-soft); color:var(--data); border:1px solid rgba(36,199,171,.35);
+    display:flex; align-items:center; justify-content:center;
+    font-size:.85rem; font-weight:700; letter-spacing:0;
+  }
+  #topbar h1{ font-size:1.2rem; font-weight:600; margin:0; letter-spacing:.2px; color:var(--ink); }
+  #topbarRight{ display:flex; align-items:center; gap:18px; }
+  #status{ display:flex; align-items:center; gap:9px; font-size:.88rem; color:var(--ink-dim); }
+  #dot{ width:9px; height:9px; border-radius:50%; background:var(--muted); transition: background .25s, box-shadow .25s; }
+  #dot.live{ background:var(--data); box-shadow: 0 0 0 4px var(--data-soft); }
+  #dot.flash{ background:var(--accent); box-shadow: 0 0 0 5px var(--accent-soft); }
 
   /* KPIs grandes */
   #kpis{ display:grid; grid-template-columns: repeat(4,1fr); gap:16px; }
-  .kpi{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 22px; }
-  .kpi .label{ font-size:1.05rem; color:var(--ink-dim); margin-bottom:6px; }
-  .kpi .value{ font-size:4.6rem; font-weight:700; line-height:1; letter-spacing:-1px; }
+  .kpi{
+    position:relative; background:var(--panel); border:1px solid var(--line-soft);
+    border-radius:var(--r-lg); padding:18px 22px 20px; overflow:hidden;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+  }
+  .kpi::before{ content:""; position:absolute; top:0; left:0; right:0; height:2px; background:var(--data); opacity:.65; }
+  .kpi .label{ font-size:.85rem; color:var(--ink-dim); margin-bottom:8px; }
+  .kpi .value{ font-size:4.4rem; font-weight:700; line-height:1; letter-spacing:-1.5px; transition: color .2s ease; }
   .kpi .value.flash{ color:var(--accent); }
 
   /* Grilla inferior */
   #grid{ flex:1; display:grid; grid-template-columns: 1.6fr 1fr 1fr; grid-template-rows: 1fr 1fr; gap:16px; min-height:0; }
-  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 18px; display:flex; flex-direction:column; min-height:0; }
-  .panel h2{ font-size:1rem; font-weight:600; color:var(--ink-dim); margin:0 0 10px; text-transform:uppercase; letter-spacing:.5px; }
+  .panel{
+    background:var(--panel); border:1px solid var(--line-soft); border-radius:var(--r-lg);
+    padding:16px 20px; display:flex; flex-direction:column; min-height:0;
+  }
+  .panel h2{
+    font-size:.76rem; font-weight:600; color:var(--ink-dim); margin:0 0 12px;
+    text-transform:uppercase; letter-spacing:.8px; display:flex; align-items:center; gap:7px;
+  }
+  .panel h2::before{ content:""; width:6px; height:6px; border-radius:2px; background:var(--data); flex:none; }
   .panel .body{ flex:1; min-height:0; position:relative; }
 
   #hourly{ grid-column:1; grid-row:1; }
@@ -64,40 +108,47 @@
   #recientes{ grid-column:1 / span 3; grid-row:2; }
 
   /* Barra horaria */
-  #hourlyChart{ display:flex; align-items:flex-end; gap:4px; height:100%; }
-  .hbar-col{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; }
-  .hbar{ width:100%; background:var(--data); border-radius:3px 3px 0 0; min-height:2px; transition: height .3s ease; }
-  .hbar.now{ background:var(--accent); }
-  .hbar-label{ font-size:.68rem; color:var(--ink-dim); margin-top:4px; }
+  #hourlyChart{ display:flex; align-items:flex-end; gap:5px; height:100%; border-bottom:1px solid var(--line-soft); }
+  .hbar-col{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; padding-top:6px; }
+  .hbar{
+    width:100%; max-width:22px; background:var(--data); border-radius:4px 4px 0 0;
+    min-height:2px; opacity:.85; transition: height .35s cubic-bezier(.22,.8,.32,1), opacity .15s;
+  }
+  .hbar-col:hover .hbar{ opacity:1; }
+  .hbar.now{ background:var(--accent); opacity:1; }
+  .hbar-label{ font-size:.65rem; color:var(--muted); margin-top:6px; }
 
   /* Listas de barras (comunas / fuentes) */
-  .barlist{ display:flex; flex-direction:column; gap:10px; justify-content:center; height:100%; }
-  .barlist-row{ display:flex; flex-direction:column; gap:3px; }
-  .barlist-top{ display:flex; justify-content:space-between; font-size:.92rem; }
-  .barlist-name{ color:var(--ink); }
-  .barlist-val{ color:var(--ink-dim); }
-  .barlist-track{ height:9px; background:#1c2530; border-radius:5px; overflow:hidden; }
-  .barlist-fill{ height:100%; background:var(--data); border-radius:5px; transition: width .3s ease; }
+  .barlist{ display:flex; flex-direction:column; gap:11px; justify-content:center; height:100%; }
+  .barlist-row{ display:flex; flex-direction:column; gap:4px; padding:2px 4px; border-radius:6px; }
+  .barlist-top{ display:flex; align-items:baseline; justify-content:space-between; font-size:.9rem; gap:10px; }
+  .barlist-name{ display:flex; align-items:baseline; gap:8px; overflow:hidden; }
+  .barlist-rank{ color:var(--muted); font-size:.7rem; font-weight:700; flex:none; }
+  .barlist-nombre{ color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .barlist-val{ color:var(--ink-dim); font-variant-numeric:tabular-nums; flex:none; }
+  .barlist-track{ height:7px; background:#161d25; border-radius:5px; overflow:hidden; margin-left:22px; }
+  .barlist-fill{ height:100%; background:var(--data); border-radius:5px; transition: width .35s cubic-bezier(.22,.8,.32,1); }
 
   /* Tabla últimas ventas */
-  #recientes table{ width:100%; border-collapse:collapse; font-size:.98rem; }
-  #recientes thead th{ text-align:left; color:var(--ink-dim); font-weight:600; font-size:.78rem; text-transform:uppercase; letter-spacing:.5px; padding:2px 10px 8px; border-bottom:1px solid var(--line); }
-  #recientes tbody td{ padding:7px 10px; border-bottom:1px solid var(--line); }
+  #recientes table{ width:100%; border-collapse:collapse; font-size:.94rem; font-variant-numeric: tabular-nums; }
+  #recientes thead th{ text-align:left; color:var(--muted); font-weight:600; font-size:.72rem; text-transform:uppercase; letter-spacing:.6px; padding:0 12px 10px; border-bottom:1px solid var(--line-soft); }
+  #recientes tbody td{ padding:9px 12px; border-bottom:1px solid var(--line-soft); }
+  #recientes tbody tr{ transition: background .15s; }
+  #recientes tbody tr:hover{ background: rgba(255,255,255,.025); }
   #recientes tbody tr.nuevo{ animation: flashrow 1.6s ease-out; }
-  @keyframes flashrow{ 0%{ background: rgba(255,179,71,.35); } 100%{ background: transparent; } }
-  #recientes .col-total{ text-align:right; font-variant-numeric: tabular-nums; }
+  @keyframes flashrow{ 0%{ background: rgba(255,180,46,.22); } 100%{ background: transparent; } }
+  #recientes .col-total{ text-align:right; font-weight:600; }
 
   /* Estado vacío */
-  .empty{ display:flex; align-items:center; justify-content:center; height:100%; color:var(--ink-dim); font-size:1rem; text-align:center; padding:10px; }
+  .empty{ display:flex; align-items:center; justify-content:center; height:100%; color:var(--muted); font-size:.95rem; text-align:center; padding:10px; }
 
   /* Cerrar sesión */
-  #topbarRight{ display:flex; align-items:center; gap:16px; }
   #logoutBtn{
-    background:none; border:1px solid var(--line); color:var(--ink-dim);
-    border-radius:6px; padding:5px 12px; font-size:.85rem; cursor:pointer;
-    font-family: inherit;
+    background:transparent; border:1px solid var(--line); color:var(--ink-dim);
+    border-radius:8px; padding:6px 13px; font-size:.82rem; cursor:pointer; font-family:inherit;
+    transition: color .15s, border-color .15s, background .15s;
   }
-  #logoutBtn:hover{ color:var(--ink); border-color:var(--ink-dim); }
+  #logoutBtn:hover{ color:var(--ink); border-color:var(--ink-dim); background:rgba(255,255,255,.03); }
 
   /* Login */
   .login-overlay{
@@ -105,23 +156,27 @@
     display:flex; align-items:center; justify-content:center; z-index:1000;
   }
   .login-card{
-    background:var(--panel); border:1px solid var(--line); border-radius:10px;
-    padding:36px 40px; width:320px; display:flex; flex-direction:column; gap:14px;
+    background:var(--panel); border:1px solid var(--line-soft); border-radius:var(--r-lg);
+    padding:38px 42px; width:328px; display:flex; flex-direction:column; gap:15px;
+    box-shadow: 0 24px 60px rgba(0,0,0,.4);
   }
-  .login-card h1{ margin:0; font-size:1.3rem; color:var(--ink); }
-  .login-sub{ margin:0; color:var(--ink-dim); font-size:.9rem; }
-  .login-card label{ display:flex; flex-direction:column; gap:6px; font-size:.85rem; color:var(--ink-dim); }
+  .login-brand{ display:flex; align-items:center; gap:10px; margin-bottom:2px; }
+  .login-card h1{ margin:0; font-size:1.25rem; color:var(--ink); font-weight:700; }
+  .login-sub{ margin:0 0 2px; color:var(--ink-dim); font-size:.88rem; }
+  .login-card label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--ink-dim); }
   .login-card input{
-    background:#1c2530; border:1px solid var(--line); border-radius:6px; color:var(--ink);
-    padding:9px 10px; font-size:1rem; font-family:inherit;
+    background:#141a21; border:1px solid var(--line); border-radius:var(--r-sm); color:var(--ink);
+    padding:10px 12px; font-size:1rem; font-family:inherit; transition: border-color .15s, box-shadow .15s;
   }
-  .login-card input:focus{ outline:1px solid var(--data); }
+  .login-card input:focus{ outline:none; border-color:var(--data); box-shadow: 0 0 0 3px var(--data-soft); }
   .login-card button{
-    margin-top:6px; background:var(--data); color:#04211f; border:none; border-radius:6px;
-    padding:10px; font-size:1rem; font-weight:600; cursor:pointer; font-family:inherit;
+    margin-top:4px; background:var(--data); color:#04211f; border:none; border-radius:var(--r-sm);
+    padding:11px; font-size:.95rem; font-weight:700; cursor:pointer; font-family:inherit;
+    transition: opacity .15s, transform .08s;
   }
-  .login-card button:hover{ opacity:.9; }
-  .login-error{ color:var(--bad); font-size:.85rem; min-height:1.1em; }
+  .login-card button:hover{ opacity:.92; }
+  .login-card button:active{ transform: scale(.98); }
+  .login-error{ color:var(--bad); font-size:.82rem; min-height:1.1em; }
 </style>
 </head>
 <body>
@@ -515,7 +570,7 @@ function FacturacionPorHora({ datos }){
         const alturaPct = Math.max(2, Math.round((val / maxVal) * 100));
         const esAhora = h === horaActual;
         return (
-          <div className="hbar-col" key={h} title={h + "h — " + formatoPesosAbrev(val)}>
+          <div className="hbar-col" key={h} data-tt={h + "h — " + formatoPesosAbrev(val)}>
             <div className={"hbar" + (esAhora ? " now" : "")} style={{ height: alturaPct + "%" }}></div>
             <div className="hbar-label">{h % 3 === 0 ? h + "h" : ""}</div>
           </div>
@@ -536,16 +591,18 @@ function TopLista({ datos, mapa, mostrarPorcentaje }){
 
   return (
     <div className="barlist">
-      {items.map(([nombre, valor]) => {
+      {items.map(([nombre, valor], i) => {
         const pct = Math.round((valor / max) * 100);
         const pctTotal = total ? Math.round((valor / total) * 100) : null;
+        const detalle = formatoEntero(valor) + (pctTotal !== null ? " · " + pctTotal + "%" : "");
         return (
-          <div className="barlist-row" key={nombre}>
+          <div className="barlist-row" key={nombre} data-tt={nombre + " — " + detalle}>
             <div className="barlist-top">
-              <span className="barlist-name">{nombre}</span>
-              <span className="barlist-val">
-                {formatoEntero(valor)}{pctTotal !== null ? " · " + pctTotal + "%" : ""}
+              <span className="barlist-name">
+                <span className="barlist-rank">{String(i + 1).padStart(2, "0")}</span>
+                <span className="barlist-nombre">{nombre}</span>
               </span>
+              <span className="barlist-val">{detalle}</span>
             </div>
             <div className="barlist-track">
               <div className="barlist-fill" style={{ width: pct + "%" }}></div>
@@ -589,7 +646,10 @@ function Dashboard({ onLogout }){
   return (
     <div id="app">
       <div id="topbar">
-        <h1>Lanimalier · ventas en vivo</h1>
+        <div id="brand">
+          <span className="brand-mark">L</span>
+          <h1>Lanimalier · ventas en vivo</h1>
+        </div>
         <div id="topbarRight">
           <StatusDot conexion={datos.conexion} flash={datos.flash} />
           <button id="logoutBtn" type="button" onClick={onLogout}>Cerrar sesión</button>
@@ -662,7 +722,10 @@ function LoginScreen({ onLogin }){
   return (
     <div className="login-overlay">
       <form className="login-card" autoComplete="off" onSubmit={manejarEnvio}>
-        <h1>Lanimalier</h1>
+        <div className="login-brand">
+          <span className="brand-mark">L</span>
+          <h1>Lanimalier</h1>
+        </div>
         <p className="login-sub">Ingresa para ver el tablero de ventas</p>
         <label>Usuario
           <input ref={usuarioRef} type="text" autoComplete="username"
