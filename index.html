@@ -76,14 +76,67 @@
 
   /* Estado vacío */
   .empty{ display:flex; align-items:center; justify-content:center; height:100%; color:var(--ink-dim); font-size:1rem; text-align:center; padding:10px; }
+
+  /* Cerrar sesión */
+  #topbarRight{ display:flex; align-items:center; gap:16px; }
+  #logoutBtn{
+    background:none; border:1px solid var(--line); color:var(--ink-dim);
+    border-radius:6px; padding:5px 12px; font-size:.85rem; cursor:pointer;
+    font-family: inherit;
+  }
+  #logoutBtn:hover{ color:var(--ink); border-color:var(--ink-dim); }
+
+  /* Login */
+  .login-overlay{
+    position:fixed; inset:0; background:var(--bg);
+    display:flex; align-items:center; justify-content:center; z-index:1000;
+  }
+  .login-overlay.oculto{ display:none; }
+  .login-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:36px 40px; width:320px; display:flex; flex-direction:column; gap:14px;
+  }
+  .login-card h1{ margin:0; font-size:1.3rem; color:var(--ink); }
+  .login-sub{ margin:0; color:var(--ink-dim); font-size:.9rem; }
+  .login-card label{ display:flex; flex-direction:column; gap:6px; font-size:.85rem; color:var(--ink-dim); }
+  .login-card input{
+    background:#1c2530; border:1px solid var(--line); border-radius:6px; color:var(--ink);
+    padding:9px 10px; font-size:1rem; font-family:inherit;
+  }
+  .login-card input:focus{ outline:1px solid var(--data); }
+  .login-card button{
+    margin-top:6px; background:var(--data); color:#04211f; border:none; border-radius:6px;
+    padding:10px; font-size:1rem; font-weight:600; cursor:pointer; font-family:inherit;
+  }
+  .login-card button:hover{ opacity:.9; }
+  .login-error{ color:var(--bad); font-size:.85rem; min-height:1.1em; }
 </style>
 </head>
 <body>
+
+<div id="loginOverlay" class="login-overlay">
+  <form id="loginForm" class="login-card" autocomplete="off">
+    <h1>Lanimalier</h1>
+    <p class="login-sub">Ingresa para ver el tablero de ventas</p>
+    <label>Usuario
+      <input type="text" id="loginUsuario" autocomplete="username" />
+    </label>
+    <label>Contraseña
+      <input type="password" id="loginClave" autocomplete="current-password" />
+    </label>
+    <div class="login-error" id="loginError"></div>
+    <button type="submit">Entrar</button>
+  </form>
+</div>
+
 <div id="app">
 
   <div id="topbar">
     <h1>Lanimalier · ventas en vivo</h1>
-    <div id="status"><span id="dot"></span><span id="statusText">cargando…</span></div>
+    <div id="topbarRight">
+      <div id="status"><span id="dot"></span><span id="statusText">cargando…</span></div>
+      <button id="logoutBtn" type="button">Cerrar sesión</button>
+    </div>
   </div>
 
   <div id="kpis">
@@ -562,7 +615,73 @@
     setInterval(sincronizarConBase, 30000);
   }
 
-  iniciar();
+  // ---------- Login ----------
+  // Simple, sin base de datos: usuario y clave quedan embebidos acá mismo.
+  // Esto NO es seguridad real (cualquiera que mire el código los puede leer),
+  // es solo una cortina para que no cualquiera que llegue al link caiga
+  // directo en el tablero.
+  const USUARIO_VALIDO = "test";
+  const CLAVE_VALIDA = "password1";
+  const CLAVE_SESION = "lanimalier_sesion";
+
+  const loginOverlay = document.getElementById("loginOverlay");
+  const loginForm = document.getElementById("loginForm");
+  const loginUsuario = document.getElementById("loginUsuario");
+  const loginClave = document.getElementById("loginClave");
+  const loginError = document.getElementById("loginError");
+  const logoutBtn = document.getElementById("logoutBtn");
+
+  // sessionStorage puede fallar en algunos navegadores con la privacidad
+  // muy restringida (por ejemplo, modo privado). Si eso pasa, el tablero
+  // simplemente pide login cada vez en vez de romperse.
+  function guardarSesion(){
+    try { sessionStorage.setItem(CLAVE_SESION, "1"); } catch (e) {}
+  }
+  function borrarSesion(){
+    try { sessionStorage.removeItem(CLAVE_SESION); } catch (e) {}
+  }
+  function sesionActiva(){
+    try { return sessionStorage.getItem(CLAVE_SESION) === "1"; }
+    catch (e) { return false; }
+  }
+
+  function mostrarLogin(){
+    loginOverlay.classList.remove("oculto");
+    loginError.textContent = "";
+    loginForm.reset();
+    loginUsuario.focus();
+  }
+
+  function ocultarLogin(){
+    loginOverlay.classList.add("oculto");
+  }
+
+  loginForm.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    if (loginUsuario.value === USUARIO_VALIDO && loginClave.value === CLAVE_VALIDA){
+      guardarSesion();
+      ocultarLogin();
+      iniciar();
+    } else {
+      loginError.textContent = "Usuario o contraseña incorrectos.";
+      loginClave.value = "";
+      loginClave.focus();
+    }
+  });
+
+  logoutBtn.addEventListener("click", () => {
+    borrarSesion();
+    // recargar es la forma más simple y segura de cortar de verdad la
+    // conexión en vivo y los temporizadores antes de volver al login
+    location.reload();
+  });
+
+  if (sesionActiva()){
+    ocultarLogin();
+    iniciar();
+  } else {
+    mostrarLogin();
+  }
 })();
 </script>
 </body>
