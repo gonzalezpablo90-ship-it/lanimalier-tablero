@@ -5,6 +5,19 @@
 <title>Lanimalier — Sala de control</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<!--
+  React "sin build": cargamos React y ReactDOM ya compilados desde un CDN,
+  igual que hicimos con Supabase. Babel (también por CDN) transforma el
+  JSX del <script type="text/babel"> de abajo directo en el navegador,
+  así seguimos con un solo archivo HTML y sin instalar nada (npm, Vite,
+  etc.). No es como se arma un proyecto React "de verdad" en una empresa,
+  pero es perfecto para aprender sin agregar piezas nuevas al despliegue.
+-->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
 <style>
   :root{
     --bg: #0a0e13;
@@ -91,7 +104,6 @@
     position:fixed; inset:0; background:var(--bg);
     display:flex; align-items:center; justify-content:center; z-index:1000;
   }
-  .login-overlay.oculto{ display:none; }
   .login-card{
     background:var(--panel); border:1px solid var(--line); border-radius:10px;
     padding:36px 40px; width:320px; display:flex; flex-direction:column; gap:14px;
@@ -114,575 +126,576 @@
 </head>
 <body>
 
-<div id="loginOverlay" class="login-overlay">
-  <form id="loginForm" class="login-card" autocomplete="off">
-    <h1>Lanimalier</h1>
-    <p class="login-sub">Ingresa para ver el tablero de ventas</p>
-    <label>Usuario
-      <input type="text" id="loginUsuario" autocomplete="username" />
-    </label>
-    <label>Contraseña
-      <input type="password" id="loginClave" autocomplete="current-password" />
-    </label>
-    <div class="login-error" id="loginError"></div>
-    <button type="submit">Entrar</button>
-  </form>
-</div>
+<div id="root"></div>
 
-<div id="app">
+<script type="text/babel">
+"use strict";
 
-  <div id="topbar">
-    <h1>Lanimalier · ventas en vivo</h1>
-    <div id="topbarRight">
-      <div id="status"><span id="dot"></span><span id="statusText">cargando…</span></div>
-      <button id="logoutBtn" type="button">Cerrar sesión</button>
-    </div>
-  </div>
+/* ============================================================
+   Config y constantes — igual que antes, fuera de cualquier
+   componente. React no cambia nada acá: esto no es "estado de
+   pantalla", es configuración fija.
+   ============================================================ */
+const SUPABASE_URL = "https://db.lanimalier.cl";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxhbmltYWxpZXIiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc4Njc1NDcyMSwiZXhwIjoyMTAyMTE0NzIxfQ.17qeMGwPJ7KVKgiU__fYEk1UzGhqdLrBZtQ2cUeY1EU";
+const SCHEMA = "lanimalier";
+const TABLE = "ventas";
+const MAX_RECIENTES = 15;
+const FLUSH_MS = 500;
 
-  <div id="kpis">
-    <div class="kpi"><div class="label">Ventas de hoy</div><div class="value" id="kpiVentas">—</div></div>
-    <div class="kpi"><div class="label">Facturación de hoy</div><div class="value" id="kpiFacturacion">—</div></div>
-    <div class="kpi"><div class="label">Ticket promedio</div><div class="value" id="kpiTicket">—</div></div>
-    <div class="kpi"><div class="label">Unidades vendidas</div><div class="value" id="kpiUnidades">—</div></div>
-  </div>
+const USUARIO_VALIDO = "test";
+const CLAVE_VALIDA = "password1";
+const CLAVE_SESION = "lanimalier_sesion";
 
-  <div id="grid">
-    <div class="panel" id="hourly">
-      <h2>Facturación por hora</h2>
-      <div class="body" id="hourlyBody"><div class="empty">Cargando ventas de hoy…</div></div>
-    </div>
-    <div class="panel" id="comunas">
-      <h2>Comunas que más compran</h2>
-      <div class="body" id="comunasBody"><div class="empty">Cargando ventas de hoy…</div></div>
-    </div>
-    <div class="panel" id="fuentes">
-      <h2>Origen del tráfico</h2>
-      <div class="body" id="fuentesBody"><div class="empty">Cargando ventas de hoy…</div></div>
-    </div>
-    <div class="panel" id="recientes">
-      <h2>Últimas ventas</h2>
-      <div class="body" id="recientesBody"><div class="empty">Cargando ventas de hoy…</div></div>
-    </div>
-  </div>
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  db: { schema: SCHEMA }
+});
 
-</div>
+function fechaLocalHoy(){
+  const d = new Date();
+  return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate();
+}
+function inicioDeHoyISO(){
+  const d = new Date();
+  d.setHours(0,0,0,0);
+  return d.toISOString();
+}
 
-<script>
-(function(){
-  "use strict";
+/* ---------- Formato ---------- */
+function formatoPesosAbrev(monto){
+  const signo = monto < 0 ? "-" : "";
+  const n = Math.abs(monto);
+  if (n >= 1_000_000) return signo + "$" + (n/1_000_000).toFixed(1).replace(".", ",") + " M";
+  if (n >= 1_000) return signo + "$" + Math.round(n/1_000) + " K";
+  return signo + "$" + n;
+}
+function formatoEntero(n){
+  return new Intl.NumberFormat("es-CL").format(n);
+}
+function formatoHora(fechaIso){
+  const d = new Date(fechaIso);
+  return String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
+}
+// Nota para quien viene de la versión sin React: antes existía una función
+// escapeHtml() a mano, porque armábamos el HTML pegando texto con
+// innerHTML (si un dato traía "<script>" adentro, se ejecutaría). JSX
+// escapa automáticamente todo lo que pones entre llaves {así}, así que
+// esa función ya no hace falta — es una de las cosas que React hace
+// más seguras por defecto.
 
-  const SUPABASE_URL = "https://db.lanimalier.cl";
-  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxhbmltYWxpZXIiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc4Njc1NDcyMSwiZXhwIjoyMTAyMTE0NzIxfQ.17qeMGwPJ7KVKgiU__fYEk1UzGhqdLrBZtQ2cUeY1EU";
-  const SCHEMA = "lanimalier";
-  const TABLE = "ventas";
-  const MAX_RECIENTES = 15;
-  const FLUSH_MS = 500;
-
-  const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    db: { schema: SCHEMA }
-  });
-
-  // ---------- Estado en memoria (con techo) ----------
-  const state = {
-    ventas: 0,
-    facturacion: 0,
-    unidades: 0,
-    porHora: new Array(24).fill(0),
-    porComuna: new Map(),   // comuna -> conteo
-    porFuente: new Map(),   // fuente -> conteo
-    recientes: [],          // máx 15
-    maxIdVisto: 0,
-    diaLocal: fechaLocalHoy(),
-    tieneDatos: false,
-    cargando: true   // true hasta que termina la primera consulta de hoy
-  };
-
-  let pendienteBuffer = [];
-  let hayCambiosPendientes = false;
-  let flashKpis = false;
-
-  function fechaLocalHoy(){
-    const d = new Date();
-    return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate();
-  }
-
-  function inicioDeHoyISO(){
-    const d = new Date();
-    d.setHours(0,0,0,0);
-    return d.toISOString();
-  }
-
-  // ---------- Formato ----------
-  function formatoPesosAbrev(monto){
-    const signo = monto < 0 ? "-" : "";
-    const n = Math.abs(monto);
-    if (n >= 1_000_000){
-      return signo + "$" + (n/1_000_000).toFixed(1).replace(".", ",") + " M";
-    }
-    if (n >= 1_000){
-      return signo + "$" + Math.round(n/1_000) + " K";
-    }
-    return signo + "$" + n;
-  }
-  function formatoEntero(n){
-    return new Intl.NumberFormat("es-CL").format(n);
-  }
-  function formatoHora(fechaIso){
-    const d = new Date(fechaIso);
-    return String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
-  }
-
-  // ---------- Carga inicial (consulta normal) ----------
-  async function cargarHistorialDeHoy(){
-    const desde = inicioDeHoyISO();
-    const pageSize = 1000;
-    let from = 0;
-    let filas = [];
-    while (true){
-      const { data, error } = await client
-        .from(TABLE)
-        .select("id,ocurrido_en,total,unidades,ciudad,fuente")
-        .eq("estado", "placed")
-        .gte("ocurrido_en", desde)
-        .order("id", { ascending: true })
-        .range(from, from + pageSize - 1);
-      if (error) throw error;
-      if (!data || data.length === 0) break;
-      filas = filas.concat(data);
-      if (data.length < pageSize) break;
-      from += pageSize;
-    }
-    return filas;
-  }
-
-  // Consulta liviana para la corrección periódica: en vez de volver a traer
-  // TODO el día (que se pone más pesada mientras más avanza la jornada),
-  // solo pide las ventas más nuevas que la última que el tablero ya conoce.
-  async function cargarVentasNuevasDesde(ultimoId){
+/* ---------- Consultas a la base (iguales a antes) ---------- */
+async function cargarHistorialDeHoy(){
+  const desde = inicioDeHoyISO();
+  const pageSize = 1000;
+  let from = 0;
+  let filas = [];
+  while (true){
     const { data, error } = await client
       .from(TABLE)
       .select("id,ocurrido_en,total,unidades,ciudad,fuente")
       .eq("estado", "placed")
-      .gt("id", ultimoId)
+      .gte("ocurrido_en", desde)
       .order("id", { ascending: true })
-      .limit(5000);
+      .range(from, from + pageSize - 1);
     if (error) throw error;
-    return data || [];
+    if (!data || data.length === 0) break;
+    filas = filas.concat(data);
+    if (data.length < pageSize) break;
+    from += pageSize;
   }
+  return filas;
+}
 
-  function aplicarVentaAAgregados(v){
-    state.ventas += 1;
-    state.facturacion += v.total || 0;
-    state.unidades += v.unidades || 0;
-    const hora = new Date(v.ocurrido_en).getHours();
-    state.porHora[hora] += (v.total || 0);
-    const comuna = v.ciudad || "Sin dato";
-    state.porComuna.set(comuna, (state.porComuna.get(comuna) || 0) + 1);
-    const fuente = v.fuente || "Sin dato";
-    state.porFuente.set(fuente, (state.porFuente.get(fuente) || 0) + 1);
-    if (v.id > state.maxIdVisto) state.maxIdVisto = v.id;
-  }
+async function cargarVentasNuevasDesde(ultimoId){
+  const { data, error } = await client
+    .from(TABLE)
+    .select("id,ocurrido_en,total,unidades,ciudad,fuente")
+    .eq("estado", "placed")
+    .gt("id", ultimoId)
+    .order("id", { ascending: true })
+    .limit(5000);
+  if (error) throw error;
+  return data || [];
+}
 
-  function agregarAReciente(v, esNueva){
-    state.recientes.unshift({ ...v, _nueva: esNueva });
-    if (state.recientes.length > MAX_RECIENTES){
-      state.recientes.length = MAX_RECIENTES;
+/* ---------- Acumulador (misma idea que el "state" de antes) ----------
+   Este objeto se sigue mutando directo, igual que en la versión anterior:
+   sumar 30 mil filas una por una creando un objeto nuevo cada vez sería
+   lento y no aporta nada. La diferencia con React es que este objeto NO
+   es lo que se pinta en pantalla — es la "libreta de apuntes" interna.
+   Cuando termina de actualizarse, sacamos una copia liviana (plana) y
+   esa copia es la que entra a React vía setState, para que la pantalla
+   se vuelva a pintar. */
+function estadoVacio(){
+  return {
+    ventas: 0,
+    facturacion: 0,
+    unidades: 0,
+    porHora: new Array(24).fill(0),
+    porComuna: {},   // antes era un Map; como objeto plano es más cómodo
+    porFuente: {},   // para copiarlo y para recorrerlo desde JSX
+    recientes: [],
+    maxIdVisto: 0,
+    tieneDatos: false,
+    cargando: true
+  };
+}
+
+function aplicarVenta(acc, v){
+  acc.ventas += 1;
+  acc.facturacion += v.total || 0;
+  acc.unidades += v.unidades || 0;
+  const hora = new Date(v.ocurrido_en).getHours();
+  acc.porHora[hora] += (v.total || 0);
+  const comuna = v.ciudad || "Sin dato";
+  acc.porComuna[comuna] = (acc.porComuna[comuna] || 0) + 1;
+  const fuente = v.fuente || "Sin dato";
+  acc.porFuente[fuente] = (acc.porFuente[fuente] || 0) + 1;
+  if (v.id > acc.maxIdVisto) acc.maxIdVisto = v.id;
+}
+
+// Arma la lista de "últimas ventas" a partir de la carga inicial.
+// Ninguna se marca como "nueva" (no hay que hacer destellar nada recién
+// abierta la página).
+function recientesIniciales(filas){
+  return filas.slice(-MAX_RECIENTES).reverse().map(v => ({ ...v, _nueva: false }));
+}
+
+function copiaPlana(acc){
+  return {
+    ventas: acc.ventas,
+    facturacion: acc.facturacion,
+    unidades: acc.unidades,
+    porHora: [...acc.porHora],
+    porComuna: { ...acc.porComuna },
+    porFuente: { ...acc.porFuente },
+    recientes: acc.recientes,
+    tieneDatos: acc.tieneDatos,
+    cargando: acc.cargando
+  };
+}
+
+/* ============================================================
+   useVentasEnVivo — un "hook" propio.
+   Un hook no es más que una función que empieza con "use" y que puede
+   usar useState/useEffect/useRef por dentro. Sirve para sacar toda la
+   lógica de "cómo se consiguen los datos" fuera del componente que
+   solo se preocupa de "cómo se ven".
+   ============================================================ */
+function useVentasEnVivo(){
+  // Esto SÍ dispara un repintado cuando cambia: es lo que se muestra.
+  const [snapshot, setSnapshot] = React.useState(estadoVacio);
+  const [conexion, setConexion] = React.useState("cargando"); // cargando | en-vivo | reconectando
+  const [flash, setFlash] = React.useState(false);
+
+  // useRef guarda un valor que sobrevive entre renders PERO que, a
+  // diferencia de useState, cambiarlo no vuelve a pintar la pantalla.
+  // Es justo lo que necesitamos para el acumulador (se actualiza
+  // constantemente, muchas veces por segundo durante una ráfaga) y para
+  // "diaLocal" (solo lo necesitan las funciones de abajo, a la pantalla
+  // no le importa directamente).
+  const accRef = React.useRef(estadoVacio());
+  const bufferRef = React.useRef([]);
+  const diaLocalRef = React.useRef(fechaLocalHoy());
+
+  React.useEffect(() => {
+    // "detenido" evita que trabajo async que quedó pendiente (una
+    // consulta que todavía no responde, un setTimeout de reconexión)
+    // intente actualizar el estado después de que este componente ya
+    // se desmontó — por ejemplo, apenas alguien hace clic en "Cerrar
+    // sesión". Es un patrón muy común en React.
+    let detenido = false;
+    let canal = null;
+    let flushId = null;
+    let syncId = null;
+    let cargaInicialLista = false;
+    let canalConectado = false;
+    let seConectoAlgunaVez = false;
+    let sincronizando = false;
+
+    function actualizarConexion(){
+      if (!cargaInicialLista) setConexion("cargando");
+      else if (canalConectado) setConexion("en-vivo");
+      else setConexion("reconectando");
     }
-  }
 
-  // Reconstruye el estado completo a partir del historial de hoy.
-  // Se usa solo en la carga inicial: es la única vez que hace falta traer
-  // el día completo, porque todavía no sabemos nada.
-  function reemplazarEstadoConSnapshot(filas){
-    state.ventas = 0;
-    state.facturacion = 0;
-    state.unidades = 0;
-    state.porHora = new Array(24).fill(0);
-    state.porComuna = new Map();
-    state.porFuente = new Map();
-    state.recientes = [];
-    state.maxIdVisto = 0;
-
-    for (const fila of filas){
-      aplicarVentaAAgregados(fila);
+    function publicarSnapshot(){
+      setSnapshot(copiaPlana(accRef.current));
     }
-    const ultimas = filas.slice(-MAX_RECIENTES).reverse();
-    for (const v of ultimas){
-      agregarAReciente(v, false);
-    }
-    state.tieneDatos = state.ventas > 0;
-  }
 
-  // Corrección periódica: solo pide lo que falte (ventas con id mayor al
-  // último que ya contamos) y lo deja en la misma bandeja que usan los
-  // avisos en vivo, para que se sumen igual que cualquier venta nueva
-  // (con su destello) en el próximo ciclo de medio segundo.
-  let sincronizando = false;
-  async function sincronizarConBase(){
-    if (sincronizando) return;
-    sincronizando = true;
-    try {
-      const faltantes = await cargarVentasNuevasDesde(state.maxIdVisto);
-      if (faltantes.length > 0){
-        pendienteBuffer.push(...faltantes);
+    function dispararFlash(){
+      setFlash(true);
+      setTimeout(() => { if (!detenido) setFlash(false); }, 700);
+    }
+
+    function reiniciarPorNuevoDia(){
+      accRef.current = estadoVacio();
+      accRef.current.cargando = false;
+      diaLocalRef.current = fechaLocalHoy();
+      publicarSnapshot();
+    }
+
+    // Procesa lo acumulado en el buffer. A diferencia de la versión
+    // anterior, acá armamos primero la lista de filas realmente nuevas
+    // y recién al final tocamos "recientes" una sola vez: así solo las
+    // filas de ESTE lote quedan marcadas "_nueva" (la versión anterior
+    // tenía un detalle ahí — una fila podía quedar marcada como nueva
+    // para siempre y destellar de nuevo en cada actualización futura).
+    function procesarBuffer(animar){
+      const hoyAhora = fechaLocalHoy();
+      if (hoyAhora !== diaLocalRef.current){
+        reiniciarPorNuevoDia();
+        return;
       }
-    } catch (e) {
-      console.error("Error sincronizando con la base:", e);
-    } finally {
-      sincronizando = false;
-    }
-  }
+      if (bufferRef.current.length === 0) return;
 
-  // ---------- Realtime ----------
-  let canal = null;
-  let cargaInicialLista = false;
-  let canalConectado = false;
-  let seConectoAlgunaVez = false;
-  function conectarRealtime(){
-    if (canal) { client.removeChannel(canal); }
-    canal = client
-      .channel("ventas-en-vivo")
-      .on("postgres_changes",
-        { event: "INSERT", schema: SCHEMA, table: TABLE, filter: "estado=eq.placed" },
-        (payload) => {
-          pendienteBuffer.push(payload.new);
-        }
-      )
-      .subscribe((estado) => {
-        if (estado === "SUBSCRIBED"){
-          canalConectado = true;
-          actualizarEstadoConexion();
-          // Si esto es una reconexión (no la primera vez que conectamos),
-          // puede que se haya perdido algún aviso durante el corte:
-          // corregimos los números contra la base antes de seguir.
-          if (seConectoAlgunaVez && cargaInicialLista){
-            sincronizarConBase();
+      const lote = bufferRef.current;
+      bufferRef.current = [];
+
+      const nuevas = [];
+      for (const fila of lote){
+        if (fila.id <= accRef.current.maxIdVisto) continue; // ya contada antes
+        aplicarVenta(accRef.current, fila);
+        nuevas.push(fila);
+      }
+
+      if (nuevas.length > 0){
+        const anteriores = accRef.current.recientes.map(r => ({ ...r, _nueva: false }));
+        const frescas = nuevas.slice(-MAX_RECIENTES).reverse().map(v => ({ ...v, _nueva: true }));
+        accRef.current.recientes = [...frescas, ...anteriores].slice(0, MAX_RECIENTES);
+        accRef.current.tieneDatos = true;
+        publicarSnapshot();
+        if (animar) dispararFlash();
+      }
+    }
+
+    async function sincronizarConBase(){
+      if (sincronizando) return;
+      sincronizando = true;
+      try {
+        const faltantes = await cargarVentasNuevasDesde(accRef.current.maxIdVisto);
+        if (!detenido && faltantes.length > 0) bufferRef.current.push(...faltantes);
+      } catch (e) {
+        console.error("Error sincronizando con la base:", e);
+      } finally {
+        sincronizando = false;
+      }
+    }
+
+    function conectarRealtime(){
+      if (canal) client.removeChannel(canal);
+      canal = client
+        .channel("ventas-en-vivo")
+        .on("postgres_changes",
+          { event: "INSERT", schema: SCHEMA, table: TABLE, filter: "estado=eq.placed" },
+          (payload) => { bufferRef.current.push(payload.new); }
+        )
+        .subscribe((estado) => {
+          if (detenido) return;
+          if (estado === "SUBSCRIBED"){
+            canalConectado = true;
+            actualizarConexion();
+            if (seConectoAlgunaVez && cargaInicialLista) sincronizarConBase();
+            seConectoAlgunaVez = true;
+          } else if (estado === "CHANNEL_ERROR" || estado === "TIMED_OUT" || estado === "CLOSED"){
+            canalConectado = false;
+            actualizarConexion();
+            setTimeout(() => { if (!detenido) conectarRealtime(); }, 3000);
           }
-          seConectoAlgunaVez = true;
-        } else if (estado === "CHANNEL_ERROR" || estado === "TIMED_OUT" || estado === "CLOSED"){
-          canalConectado = false;
-          actualizarEstadoConexion();
-          setTimeout(conectarRealtime, 3000);
-        }
-      });
-  }
-
-  // El punto solo se pone verde ("en vivo") cuando se cumplen dos cosas a
-  // la vez: el canal en vivo está conectado Y ya terminó de cargar el
-  // historial de hoy. Si solo se cumple la primera, seguimos diciendo
-  // "cargando…" para no mostrar "en vivo" con los paneles todavía vacíos.
-  function actualizarEstadoConexion(){
-    const dot = document.getElementById("dot");
-    const txt = document.getElementById("statusText");
-    if (!cargaInicialLista){
-      dot.className = "";
-      txt.textContent = "cargando…";
-    } else if (canalConectado){
-      dot.className = "live";
-      txt.textContent = "en vivo";
-    } else {
-      dot.className = "";
-      txt.textContent = "reconectando…";
-    }
-  }
-
-  // ---------- Procesar buffer cada 500ms ----------
-  function procesarBuffer(animar){
-    // revisar cambio de día
-    const hoyAhora = fechaLocalHoy();
-    if (hoyAhora !== state.diaLocal){
-      reiniciarPorNuevoDia();
-      return;
+        });
     }
 
-    if (pendienteBuffer.length === 0) return;
-
-    const lote = pendienteBuffer;
-    pendienteBuffer = [];
-
-    let huboNuevas = false;
-    for (const fila of lote){
-      if (fila.id <= state.maxIdVisto) continue; // ya contada antes
-      aplicarVentaAAgregados(fila);
-      agregarAReciente(fila, true);
-      huboNuevas = true;
+    function alVolverVisible(){
+      if (document.visibilityState === "visible" && cargaInicialLista){
+        procesarBuffer(false);
+        sincronizarConBase();
+      }
     }
 
-    if (huboNuevas){
-      state.tieneDatos = true;
-      renderTodo(animar);
-      if (animar) pulsarVivo();
-    }
-  }
+    async function iniciar(){
+      conectarRealtime();
+      try {
+        const filas = await cargarHistorialDeHoy();
+        if (detenido) return;
+        accRef.current = estadoVacio();
+        for (const fila of filas) aplicarVenta(accRef.current, fila);
+        accRef.current.recientes = recientesIniciales(filas);
+        accRef.current.tieneDatos = accRef.current.ventas > 0;
+      } catch (e) {
+        console.error("Error cargando historial:", e);
+      }
+      if (detenido) return;
 
-  function iniciarLoopDeRender(){
-    setInterval(() => procesarBuffer(true), FLUSH_MS);
-  }
+      accRef.current.cargando = false;
+      cargaInicialLista = true;
+      publicarSnapshot();
+      actualizarConexion();
 
-  // El navegador enlentece a propósito los temporizadores (setInterval) de
-  // una pestaña minimizada o tapada por otra ventana, para ahorrar batería.
-  // Si eso pasa, el tablero se puede atrasar mientras nadie lo ve. Para que
-  // se ponga al día apenas alguien vuelve a mirar la pantalla —y no un
-  // rato después, cuando el navegador decida retomar el ritmo normal—
-  // forzamos una actualización inmediata en cuanto la pestaña vuelve a
-  // estar visible.
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && cargaInicialLista){
-      procesarBuffer(false);
-      sincronizarConBase();
-    }
-  });
-
-  function reiniciarPorNuevoDia(){
-    state.ventas = 0;
-    state.facturacion = 0;
-    state.unidades = 0;
-    state.porHora = new Array(24).fill(0);
-    state.porComuna = new Map();
-    state.porFuente = new Map();
-    state.recientes = [];
-    state.diaLocal = fechaLocalHoy();
-    state.tieneDatos = false;
-    renderTodo(false);
-  }
-
-  function pulsarVivo(){
-    const dot = document.getElementById("dot");
-    dot.classList.add("flash");
-    setTimeout(() => { dot.classList.remove("flash"); dot.classList.add("live"); }, 400);
-
-    document.querySelectorAll(".kpi .value").forEach(el => {
-      el.classList.add("flash");
-      setTimeout(() => el.classList.remove("flash"), 700);
-    });
-  }
-
-  // ---------- Render ----------
-  function renderTodo(animarRecientes){
-    renderKpis();
-    renderHourly();
-    renderComunas();
-    renderFuentes();
-    renderRecientes(animarRecientes);
-  }
-
-  function renderKpis(){
-    const vEl = document.getElementById("kpiVentas");
-    const fEl = document.getElementById("kpiFacturacion");
-    const tEl = document.getElementById("kpiTicket");
-    const uEl = document.getElementById("kpiUnidades");
-    if (state.cargando){
-      vEl.textContent = "—";
-      fEl.textContent = "—";
-      tEl.textContent = "—";
-      uEl.textContent = "—";
-      return;
-    }
-    if (!state.tieneDatos){
-      vEl.textContent = "0";
-      fEl.textContent = "$0";
-      tEl.textContent = "$0";
-      uEl.textContent = "0";
-      return;
-    }
-    vEl.textContent = formatoEntero(state.ventas);
-    fEl.textContent = formatoPesosAbrev(state.facturacion);
-    tEl.textContent = formatoPesosAbrev(state.ventas ? Math.round(state.facturacion / state.ventas) : 0);
-    uEl.textContent = formatoEntero(state.unidades);
-  }
-
-  function renderHourly(){
-    const body = document.getElementById("hourlyBody");
-    if (state.cargando){
-      body.innerHTML = '<div class="empty">Cargando ventas de hoy…</div>';
-      return;
-    }
-    if (!state.tieneDatos){
-      body.innerHTML = '<div class="empty">Todavía no hay ventas hoy</div>';
-      return;
-    }
-    const horaActual = new Date().getHours();
-    const maxVal = Math.max(1, ...state.porHora);
-    let html = '<div id="hourlyChart">';
-    for (let h = 0; h < 24; h++){
-      const val = state.porHora[h];
-      const alturaPct = Math.max(2, Math.round((val / maxVal) * 100));
-      const esAhora = h === horaActual;
-      html += `<div class="hbar-col" title="${h}h — ${formatoPesosAbrev(val)}">
-        <div class="hbar${esAhora ? ' now' : ''}" style="height:${alturaPct}%"></div>
-        <div class="hbar-label">${h % 3 === 0 ? h + 'h' : ''}</div>
-      </div>`;
-    }
-    html += "</div>";
-    body.innerHTML = html;
-  }
-
-  function renderTopLista(mapa, contenedorId, totalParaPct){
-    const body = document.getElementById(contenedorId);
-    if (state.cargando){
-      body.innerHTML = '<div class="empty">Cargando ventas de hoy…</div>';
-      return;
-    }
-    if (!state.tieneDatos || mapa.size === 0){
-      body.innerHTML = '<div class="empty">Todavía no hay datos hoy</div>';
-      return;
-    }
-    const items = [...mapa.entries()].sort((a,b) => b[1] - a[1]).slice(0, 5);
-    const max = items[0][1];
-    let html = '<div class="barlist">';
-    for (const [nombre, valor] of items){
-      const pct = Math.round((valor / max) * 100);
-      const pctTotal = totalParaPct ? Math.round((valor / totalParaPct) * 100) : null;
-      html += `<div class="barlist-row">
-        <div class="barlist-top">
-          <span class="barlist-name">${escapeHtml(nombre)}</span>
-          <span class="barlist-val">${formatoEntero(valor)}${pctTotal !== null ? " · " + pctTotal + "%" : ""}</span>
-        </div>
-        <div class="barlist-track"><div class="barlist-fill" style="width:${pct}%"></div></div>
-      </div>`;
-    }
-    html += "</div>";
-    body.innerHTML = html;
-  }
-
-  function renderComunas(){
-    renderTopLista(state.porComuna, "comunasBody", null);
-  }
-
-  function renderFuentes(){
-    const totalFuentes = [...state.porFuente.values()].reduce((a,b) => a+b, 0);
-    renderTopLista(state.porFuente, "fuentesBody", totalFuentes);
-  }
-
-  function renderRecientes(animar){
-    const body = document.getElementById("recientesBody");
-    if (state.cargando){
-      body.innerHTML = '<div class="empty">Cargando ventas de hoy…</div>';
-      return;
-    }
-    if (!state.tieneDatos || state.recientes.length === 0){
-      body.innerHTML = '<div class="empty">Todavía no hay ventas registradas hoy — el sistema está a la espera</div>';
-      return;
-    }
-    let html = `<table>
-      <thead><tr>
-        <th>Hora</th><th>Comuna</th><th>Origen</th><th>Unid.</th><th class="col-total">Total</th>
-      </tr></thead><tbody>`;
-    for (const v of state.recientes){
-      html += `<tr class="${v._nueva && animar ? 'nuevo' : ''}">
-        <td>${formatoHora(v.ocurrido_en)}</td>
-        <td>${escapeHtml(v.ciudad || "—")}</td>
-        <td>${escapeHtml(v.fuente || "—")}</td>
-        <td>${formatoEntero(v.unidades || 0)}</td>
-        <td class="col-total">${formatoPesosAbrev(v.total || 0)}</td>
-      </tr>`;
-    }
-    html += "</tbody></table>";
-    body.innerHTML = html;
-  }
-
-  function escapeHtml(s){
-    return String(s).replace(/[&<>"']/g, c => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-    }[c]));
-  }
-
-  // ---------- Arranque ----------
-  async function iniciar(){
-    // 1) abrir el canal en vivo primero, para no perder ventas que entren
-    //    mientras se hace la consulta de historial
-    conectarRealtime();
-
-    // 2) consulta normal con el historial de hoy
-    try {
-      const filas = await cargarHistorialDeHoy();
-      reemplazarEstadoConSnapshot(filas);
-    } catch (e) {
-      // sin datos visibles de error: se muestra estado vacío/ordenado igual
-      console.error("Error cargando historial:", e);
+      flushId = setInterval(() => procesarBuffer(true), FLUSH_MS);
+      syncId = setInterval(sincronizarConBase, 30000);
+      document.addEventListener("visibilitychange", alVolverVisible);
     }
 
-    state.cargando = false;
-    cargaInicialLista = true;
-    renderTodo(false);
-    actualizarEstadoConexion();
-    iniciarLoopDeRender();
-
-    // 3) además de los avisos en vivo, cada cierto tiempo recalculamos todo
-    //    desde la base: así, si algún aviso se perdió (ráfaga muy grande,
-    //    corte de conexión), el tablero se autocorrige solo en vez de
-    //    quedar con un número más chico que el real para siempre.
-    setInterval(sincronizarConBase, 30000);
-  }
-
-  // ---------- Login ----------
-  // Simple, sin base de datos: usuario y clave quedan embebidos acá mismo.
-  // Esto NO es seguridad real (cualquiera que mire el código los puede leer),
-  // es solo una cortina para que no cualquiera que llegue al link caiga
-  // directo en el tablero.
-  const USUARIO_VALIDO = "test";
-  const CLAVE_VALIDA = "password1";
-  const CLAVE_SESION = "lanimalier_sesion";
-
-  const loginOverlay = document.getElementById("loginOverlay");
-  const loginForm = document.getElementById("loginForm");
-  const loginUsuario = document.getElementById("loginUsuario");
-  const loginClave = document.getElementById("loginClave");
-  const loginError = document.getElementById("loginError");
-  const logoutBtn = document.getElementById("logoutBtn");
-
-  // sessionStorage puede fallar en algunos navegadores con la privacidad
-  // muy restringida (por ejemplo, modo privado). Si eso pasa, el tablero
-  // simplemente pide login cada vez en vez de romperse.
-  function guardarSesion(){
-    try { sessionStorage.setItem(CLAVE_SESION, "1"); } catch (e) {}
-  }
-  function borrarSesion(){
-    try { sessionStorage.removeItem(CLAVE_SESION); } catch (e) {}
-  }
-  function sesionActiva(){
-    try { return sessionStorage.getItem(CLAVE_SESION) === "1"; }
-    catch (e) { return false; }
-  }
-
-  function mostrarLogin(){
-    loginOverlay.classList.remove("oculto");
-    loginError.textContent = "";
-    loginForm.reset();
-    loginUsuario.focus();
-  }
-
-  function ocultarLogin(){
-    loginOverlay.classList.add("oculto");
-  }
-
-  loginForm.addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    if (loginUsuario.value === USUARIO_VALIDO && loginClave.value === CLAVE_VALIDA){
-      guardarSesion();
-      ocultarLogin();
-      iniciar();
-    } else {
-      loginError.textContent = "Usuario o contraseña incorrectos.";
-      loginClave.value = "";
-      loginClave.focus();
-    }
-  });
-
-  logoutBtn.addEventListener("click", () => {
-    borrarSesion();
-    // recargar es la forma más simple y segura de cortar de verdad la
-    // conexión en vivo y los temporizadores antes de volver al login
-    location.reload();
-  });
-
-  if (sesionActiva()){
-    ocultarLogin();
     iniciar();
-  } else {
-    mostrarLogin();
+
+    // La función que retorna un useEffect es su "limpieza": React la
+    // llama automáticamente cuando el componente se desmonta (acá, al
+    // cerrar sesión). Antes esto lo resolvíamos recargando la página
+    // entera con location.reload() — ahora cortamos la conexión en vivo
+    // y los temporizadores "a mano", de forma prolija.
+    return () => {
+      detenido = true;
+      if (flushId) clearInterval(flushId);
+      if (syncId) clearInterval(syncId);
+      document.removeEventListener("visibilitychange", alVolverVisible);
+      if (canal) client.removeChannel(canal);
+    };
+  }, []); // [] = "arrancar una sola vez, al montar"
+
+  return { ...snapshot, conexion, flash };
+}
+
+/* ============================================================
+   Componentes de presentación — cada uno recibe datos por props y
+   decide cómo pintarlos. No saben nada de Supabase ni de buffers.
+   ============================================================ */
+
+function StatusDot({ conexion, flash }){
+  let clase = "";
+  if (flash) clase = "flash";
+  else if (conexion === "en-vivo") clase = "live";
+  const texto = conexion === "en-vivo" ? "en vivo"
+    : conexion === "reconectando" ? "reconectando…"
+    : "cargando…";
+  return (
+    <div id="status">
+      <span id="dot" className={clase}></span>
+      <span>{texto}</span>
+    </div>
+  );
+}
+
+function Kpi({ label, valor, flash }){
+  return (
+    <div className="kpi">
+      <div className="label">{label}</div>
+      <div className={"value" + (flash ? " flash" : "")}>{valor}</div>
+    </div>
+  );
+}
+
+function Kpis({ datos }){
+  const cargando = datos.cargando;
+  const sinDatos = !datos.tieneDatos;
+  const ticket = datos.ventas ? Math.round(datos.facturacion / datos.ventas) : 0;
+  const valor = (conDatos, vacio) => cargando ? "—" : (sinDatos ? vacio : conDatos);
+  return (
+    <div id="kpis">
+      <Kpi label="Ventas de hoy" flash={datos.flash}
+           valor={valor(formatoEntero(datos.ventas), "0")} />
+      <Kpi label="Facturación de hoy" flash={datos.flash}
+           valor={valor(formatoPesosAbrev(datos.facturacion), "$0")} />
+      <Kpi label="Ticket promedio" flash={datos.flash}
+           valor={valor(formatoPesosAbrev(ticket), "$0")} />
+      <Kpi label="Unidades vendidas" flash={datos.flash}
+           valor={valor(formatoEntero(datos.unidades), "0")} />
+    </div>
+  );
+}
+
+function FacturacionPorHora({ datos }){
+  if (datos.cargando) return <div className="empty">Cargando ventas de hoy…</div>;
+  if (!datos.tieneDatos) return <div className="empty">Todavía no hay ventas hoy</div>;
+
+  const horaActual = new Date().getHours();
+  const maxVal = Math.max(1, ...datos.porHora);
+  return (
+    <div id="hourlyChart">
+      {datos.porHora.map((val, h) => {
+        const alturaPct = Math.max(2, Math.round((val / maxVal) * 100));
+        const esAhora = h === horaActual;
+        return (
+          <div className="hbar-col" key={h} title={h + "h — " + formatoPesosAbrev(val)}>
+            <div className={"hbar" + (esAhora ? " now" : "")} style={{ height: alturaPct + "%" }}></div>
+            <div className="hbar-label">{h % 3 === 0 ? h + "h" : ""}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TopLista({ datos, mapa, mostrarPorcentaje }){
+  if (datos.cargando) return <div className="empty">Cargando ventas de hoy…</div>;
+  const entradas = Object.entries(mapa);
+  if (!datos.tieneDatos || entradas.length === 0) return <div className="empty">Todavía no hay datos hoy</div>;
+
+  const items = entradas.sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const max = items[0][1];
+  const total = mostrarPorcentaje ? entradas.reduce((acc, [, v]) => acc + v, 0) : null;
+
+  return (
+    <div className="barlist">
+      {items.map(([nombre, valor]) => {
+        const pct = Math.round((valor / max) * 100);
+        const pctTotal = total ? Math.round((valor / total) * 100) : null;
+        return (
+          <div className="barlist-row" key={nombre}>
+            <div className="barlist-top">
+              <span className="barlist-name">{nombre}</span>
+              <span className="barlist-val">
+                {formatoEntero(valor)}{pctTotal !== null ? " · " + pctTotal + "%" : ""}
+              </span>
+            </div>
+            <div className="barlist-track">
+              <div className="barlist-fill" style={{ width: pct + "%" }}></div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function UltimasVentas({ datos }){
+  if (datos.cargando) return <div className="empty">Cargando ventas de hoy…</div>;
+  if (!datos.tieneDatos || datos.recientes.length === 0){
+    return <div className="empty">Todavía no hay ventas registradas hoy — el sistema está a la espera</div>;
   }
-})();
+  return (
+    <table>
+      <thead>
+        <tr><th>Hora</th><th>Comuna</th><th>Origen</th><th>Unid.</th><th className="col-total">Total</th></tr>
+      </thead>
+      <tbody>
+        {datos.recientes.map(v => (
+          // "key" le dice a React qué fila es cuál entre renders — acá
+          // usamos el id real de la venta, que nunca se repite.
+          <tr key={v.id} className={v._nueva ? "nuevo" : ""}>
+            <td>{formatoHora(v.ocurrido_en)}</td>
+            <td>{v.ciudad || "—"}</td>
+            <td>{v.fuente || "—"}</td>
+            <td>{formatoEntero(v.unidades || 0)}</td>
+            <td className="col-total">{formatoPesosAbrev(v.total || 0)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function Dashboard({ onLogout }){
+  const datos = useVentasEnVivo();
+  return (
+    <div id="app">
+      <div id="topbar">
+        <h1>Lanimalier · ventas en vivo</h1>
+        <div id="topbarRight">
+          <StatusDot conexion={datos.conexion} flash={datos.flash} />
+          <button id="logoutBtn" type="button" onClick={onLogout}>Cerrar sesión</button>
+        </div>
+      </div>
+
+      <Kpis datos={datos} />
+
+      <div id="grid">
+        <div className="panel" id="hourly">
+          <h2>Facturación por hora</h2>
+          <div className="body"><FacturacionPorHora datos={datos} /></div>
+        </div>
+        <div className="panel" id="comunas">
+          <h2>Comunas que más compran</h2>
+          <div className="body"><TopLista datos={datos} mapa={datos.porComuna} /></div>
+        </div>
+        <div className="panel" id="fuentes">
+          <h2>Origen del tráfico</h2>
+          <div className="body"><TopLista datos={datos} mapa={datos.porFuente} mostrarPorcentaje /></div>
+        </div>
+        <div className="panel" id="recientes">
+          <h2>Últimas ventas</h2>
+          <div className="body"><UltimasVentas datos={datos} /></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Login ---------- */
+// Simple, sin base de datos: usuario y clave quedan embebidos acá mismo.
+// Esto NO es seguridad real (cualquiera que mire el código los puede
+// leer), es solo una cortina para que no cualquiera que llegue al link
+// caiga directo en el tablero.
+function guardarSesion(){
+  try { sessionStorage.setItem(CLAVE_SESION, "1"); } catch (e) {}
+}
+function borrarSesion(){
+  try { sessionStorage.removeItem(CLAVE_SESION); } catch (e) {}
+}
+function sesionActivaInicial(){
+  try { return sessionStorage.getItem(CLAVE_SESION) === "1"; }
+  catch (e) { return false; }
+}
+
+function LoginScreen({ onLogin }){
+  // Cada input queda "controlado" por React: su valor vive en useState,
+  // no en el DOM. Es el patrón estándar de formularios en React.
+  const [usuario, setUsuario] = React.useState("");
+  const [clave, setClave] = React.useState("");
+  const [error, setError] = React.useState("");
+  const usuarioRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (usuarioRef.current) usuarioRef.current.focus();
+  }, []);
+
+  function manejarEnvio(ev){
+    ev.preventDefault();
+    if (usuario === USUARIO_VALIDO && clave === CLAVE_VALIDA){
+      guardarSesion();
+      onLogin();
+    } else {
+      setError("Usuario o contraseña incorrectos.");
+      setClave("");
+    }
+  }
+
+  return (
+    <div className="login-overlay">
+      <form className="login-card" autoComplete="off" onSubmit={manejarEnvio}>
+        <h1>Lanimalier</h1>
+        <p className="login-sub">Ingresa para ver el tablero de ventas</p>
+        <label>Usuario
+          <input ref={usuarioRef} type="text" autoComplete="username"
+                 value={usuario} onChange={e => setUsuario(e.target.value)} />
+        </label>
+        <label>Contraseña
+          <input type="password" autoComplete="current-password"
+                 value={clave} onChange={e => setClave(e.target.value)} />
+        </label>
+        <div className="login-error">{error}</div>
+        <button type="submit">Entrar</button>
+      </form>
+    </div>
+  );
+}
+
+function App(){
+  // El estado más "arriba" de todos: ¿hay sesión o no? De eso depende
+  // qué pantalla completa se muestra.
+  const [sesion, setSesion] = React.useState(sesionActivaInicial);
+
+  if (!sesion){
+    return <LoginScreen onLogin={() => setSesion(true)} />;
+  }
+
+  // Al desmontar <Dashboard/> (sesion pasa a false), el useEffect de
+  // useVentasEnVivo corre su limpieza solo: cierra el canal en vivo y
+  // los temporizadores. Por eso el logout ya no necesita recargar la
+  // página como antes.
+  return <Dashboard onLogout={() => { borrarSesion(); setSesion(false); }} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 </body>
 </html>
