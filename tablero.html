@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Lanimalier — Sala de control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg: #0a0e13;
+    --panel: #12181f;
+    --line: #232c36;
+    --ink: #eef3f7;
+    --ink-dim: #8fa1b0;
+    --data: #4fb3ac;      /* color principal de datos */
+    --accent: #ffb347;    /* acento: solo para lo que cambia / vivo */
+    --bad: #e2574c;
+  }
+  *{ box-sizing: border-box; }
+  html,body{
+    margin:0; padding:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family: "Segoe UI", Arial, sans-serif;
+    overflow:hidden;
+  }
+  #app{ display:flex; flex-direction:column; height:100vh; padding: 18px 26px 14px; gap:14px; }
+
+  /* Encabezado */
+  #topbar{ display:flex; align-items:baseline; justify-content:space-between; }
+  #topbar h1{ font-size: 1.3rem; font-weight:600; margin:0; letter-spacing:.5px; color:var(--ink); }
+  #status{ display:flex; align-items:center; gap:8px; font-size:.95rem; color:var(--ink-dim); }
+  #dot{ width:12px; height:12px; border-radius:50%; background:var(--ink-dim); transition: background .2s; }
+  #dot.live{ background:var(--data); }
+  #dot.flash{ background:var(--accent); }
+
+  /* KPIs grandes */
+  #kpis{ display:grid; grid-template-columns: repeat(4,1fr); gap:16px; }
+  .kpi{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 22px; }
+  .kpi .label{ font-size:1.05rem; color:var(--ink-dim); margin-bottom:6px; }
+  .kpi .value{ font-size:4.6rem; font-weight:700; line-height:1; letter-spacing:-1px; }
+  .kpi .value.flash{ color:var(--accent); }
+
+  /* Grilla inferior */
+  #grid{ flex:1; display:grid; grid-template-columns: 1.6fr 1fr 1fr; grid-template-rows: 1fr 1fr; gap:16px; min-height:0; }
+  .panel{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 18px; display:flex; flex-direction:column; min-height:0; }
+  .panel h2{ font-size:1rem; font-weight:600; color:var(--ink-dim); margin:0 0 10px; text-transform:uppercase; letter-spacing:.5px; }
+  .panel .body{ flex:1; min-height:0; position:relative; }
+
+  #hourly{ grid-column:1; grid-row:1; }
+  #comunas{ grid-column:2; grid-row:1; }
+  #fuentes{ grid-column:3; grid-row:1; }
+  #recientes{ grid-column:1 / span 3; grid-row:2; }
+
+  /* Barra horaria */
+  #hourlyChart{ display:flex; align-items:flex-end; gap:4px; height:100%; }
+  .hbar-col{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; }
+  .hbar{ width:100%; background:var(--data); border-radius:3px 3px 0 0; min-height:2px; transition: height .3s ease; }
+  .hbar.now{ background:var(--accent); }
+  .hbar-label{ font-size:.68rem; color:var(--ink-dim); margin-top:4px; }
+
+  /* Listas de barras (comunas / fuentes) */
+  .barlist{ display:flex; flex-direction:column; gap:10px; justify-content:center; height:100%; }
+  .barlist-row{ display:flex; flex-direction:column; gap:3px; }
+  .barlist-top{ display:flex; justify-content:space-between; font-size:.92rem; }
+  .barlist-name{ color:var(--ink); }
+  .barlist-val{ color:var(--ink-dim); }
+  .barlist-track{ height:9px; background:#1c2530; border-radius:5px; overflow:hidden; }
+  .barlist-fill{ height:100%; background:var(--data); border-radius:5px; transition: width .3s ease; }
+
+  /* Tabla últimas ventas */
+  #recientes table{ width:100%; border-collapse:collapse; font-size:.98rem; }
+  #recientes thead th{ text-align:left; color:var(--ink-dim); font-weight:600; font-size:.78rem; text-transform:uppercase; letter-spacing:.5px; padding:2px 10px 8px; border-bottom:1px solid var(--line); }
+  #recientes tbody td{ padding:7px 10px; border-bottom:1px solid var(--line); }
+  #recientes tbody tr.nuevo{ animation: flashrow 1.6s ease-out; }
+  @keyframes flashrow{ 0%{ background: rgba(255,179,71,.35); } 100%{ background: transparent; } }
+  #recientes .col-total{ text-align:right; font-variant-numeric: tabular-nums; }
+
+  /* Estado vacío */
+  .empty{ display:flex; align-items:center; justify-content:center; height:100%; color:var(--ink-dim); font-size:1rem; text-align:center; padding:10px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="topbar">
+    <h1>Lanimalier · ventas en vivo</h1>
+    <div id="status"><span id="dot"></span><span id="statusText">cargando…</span></div>
+  </div>
+
+  <div id="kpis">
+    <div class="kpi"><div class="label">Ventas de hoy</div><div class="value" id="kpiVentas">—</div></div>
+    <div class="kpi"><div class="label">Facturación de hoy</div><div class="value" id="kpiFacturacion">—</div></div>
+    <div class="kpi"><div class="label">Ticket promedio</div><div class="value" id="kpiTicket">—</div></div>
+    <div class="kpi"><div class="label">Unidades vendidas</div><div class="value" id="kpiUnidades">—</div></div>
+  </div>
+
+  <div id="grid">
+    <div class="panel" id="hourly">
+      <h2>Facturación por hora</h2>
+      <div class="body" id="hourlyBody"><div class="empty">Cargando ventas de hoy…</div></div>
+    </div>
+    <div class="panel" id="comunas">
+      <h2>Comunas que más compran</h2>
+      <div class="body" id="comunasBody"><div class="empty">Cargando ventas de hoy…</div></div>
+    </div>
+    <div class="panel" id="fuentes">
+      <h2>Origen del tráfico</h2>
+      <div class="body" id="fuentesBody"><div class="empty">Cargando ventas de hoy…</div></div>
+    </div>
+    <div class="panel" id="recientes">
+      <h2>Últimas ventas</h2>
+      <div class="body" id="recientesBody"><div class="empty">Cargando ventas de hoy…</div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const SUPABASE_URL = "https://db.lanimalier.cl";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxhbmltYWxpZXIiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc4Njc1NDcyMSwiZXhwIjoyMTAyMTE0NzIxfQ.17qeMGwPJ7KVKgiU__fYEk1UzGhqdLrBZtQ2cUeY1EU";
+  const SCHEMA = "lanimalier";
+  const TABLE = "ventas";
+  const MAX_RECIENTES = 15;
+  const FLUSH_MS = 500;
+
+  const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    db: { schema: SCHEMA }
+  });
+
+  // ---------- Estado en memoria (con techo) ----------
+  const state = {
+    ventas: 0,
+    facturacion: 0,
+    unidades: 0,
+    porHora: new Array(24).fill(0),
+    porComuna: new Map(),   // comuna -> conteo
+    porFuente: new Map(),   // fuente -> conteo
+    recientes: [],          // máx 15
+    maxIdVisto: 0,
+    diaLocal: fechaLocalHoy(),
+    tieneDatos: false,
+    cargando: true   // true hasta que termina la primera consulta de hoy
+  };
+
+  let pendienteBuffer = [];
+  let hayCambiosPendientes = false;
+  let flashKpis = false;
+
+  function fechaLocalHoy(){
+    const d = new Date();
+    return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate();
+  }
+
+  function inicioDeHoyISO(){
+    const d = new Date();
+    d.setHours(0,0,0,0);
+    return d.toISOString();
+  }
+
+  // ---------- Formato ----------
+  function formatoPesosAbrev(monto){
+    const signo = monto < 0 ? "-" : "";
+    const n = Math.abs(monto);
+    if (n >= 1_000_000){
+      return signo + "$" + (n/1_000_000).toFixed(1).replace(".", ",") + " M";
+    }
+    if (n >= 1_000){
+      return signo + "$" + Math.round(n/1_000) + " K";
+    }
+    return signo + "$" + n;
+  }
+  function formatoEntero(n){
+    return new Intl.NumberFormat("es-CL").format(n);
+  }
+  function formatoHora(fechaIso){
+    const d = new Date(fechaIso);
+    return String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
+  }
+
+  // ---------- Carga inicial (consulta normal) ----------
+  async function cargarHistorialDeHoy(){
+    const desde = inicioDeHoyISO();
+    const pageSize = 1000;
+    let from = 0;
+    let filas = [];
+    while (true){
+      const { data, error } = await client
+        .from(TABLE)
+        .select("id,ocurrido_en,total,unidades,ciudad,fuente")
+        .eq("estado", "placed")
+        .gte("ocurrido_en", desde)
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      filas = filas.concat(data);
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    return filas;
+  }
+
+  // Consulta liviana para la corrección periódica: en vez de volver a traer
+  // TODO el día (que se pone más pesada mientras más avanza la jornada),
+  // solo pide las ventas más nuevas que la última que el tablero ya conoce.
+  async function cargarVentasNuevasDesde(ultimoId){
+    const { data, error } = await client
+      .from(TABLE)
+      .select("id,ocurrido_en,total,unidades,ciudad,fuente")
+      .eq("estado", "placed")
+      .gt("id", ultimoId)
+      .order("id", { ascending: true })
+      .limit(5000);
+    if (error) throw error;
+    return data || [];
+  }
+
+  function aplicarVentaAAgregados(v){
+    state.ventas += 1;
+    state.facturacion += v.total || 0;
+    state.unidades += v.unidades || 0;
+    const hora = new Date(v.ocurrido_en).getHours();
+    state.porHora[hora] += (v.total || 0);
+    const comuna = v.ciudad || "Sin dato";
+    state.porComuna.set(comuna, (state.porComuna.get(comuna) || 0) + 1);
+    const fuente = v.fuente || "Sin dato";
+    state.porFuente.set(fuente, (state.porFuente.get(fuente) || 0) + 1);
+    if (v.id > state.maxIdVisto) state.maxIdVisto = v.id;
+  }
+
+  function agregarAReciente(v, esNueva){
+    state.recientes.unshift({ ...v, _nueva: esNueva });
+    if (state.recientes.length > MAX_RECIENTES){
+      state.recientes.length = MAX_RECIENTES;
+    }
+  }
+
+  // Reconstruye el estado completo a partir del historial de hoy.
+  // Se usa solo en la carga inicial: es la única vez que hace falta traer
+  // el día completo, porque todavía no sabemos nada.
+  function reemplazarEstadoConSnapshot(filas){
+    state.ventas = 0;
+    state.facturacion = 0;
+    state.unidades = 0;
+    state.porHora = new Array(24).fill(0);
+    state.porComuna = new Map();
+    state.porFuente = new Map();
+    state.recientes = [];
+    state.maxIdVisto = 0;
+
+    for (const fila of filas){
+      aplicarVentaAAgregados(fila);
+    }
+    const ultimas = filas.slice(-MAX_RECIENTES).reverse();
+    for (const v of ultimas){
+      agregarAReciente(v, false);
+    }
+    state.tieneDatos = state.ventas > 0;
+  }
+
+  // Corrección periódica: solo pide lo que falte (ventas con id mayor al
+  // último que ya contamos) y lo deja en la misma bandeja que usan los
+  // avisos en vivo, para que se sumen igual que cualquier venta nueva
+  // (con su destello) en el próximo ciclo de medio segundo.
+  let sincronizando = false;
+  async function sincronizarConBase(){
+    if (sincronizando) return;
+    sincronizando = true;
+    try {
+      const faltantes = await cargarVentasNuevasDesde(state.maxIdVisto);
+      if (faltantes.length > 0){
+        pendienteBuffer.push(...faltantes);
+      }
+    } catch (e) {
+      console.error("Error sincronizando con la base:", e);
+    } finally {
+      sincronizando = false;
+    }
+  }
+
+  // ---------- Realtime ----------
+  let canal = null;
+  let cargaInicialLista = false;
+  let canalConectado = false;
+  let seConectoAlgunaVez = false;
+  function conectarRealtime(){
+    if (canal) { client.removeChannel(canal); }
+    canal = client
+      .channel("ventas-en-vivo")
+      .on("postgres_changes",
+        { event: "INSERT", schema: SCHEMA, table: TABLE, filter: "estado=eq.placed" },
+        (payload) => {
+          pendienteBuffer.push(payload.new);
+        }
+      )
+      .subscribe((estado) => {
+        if (estado === "SUBSCRIBED"){
+          canalConectado = true;
+          actualizarEstadoConexion();
+          // Si esto es una reconexión (no la primera vez que conectamos),
+          // puede que se haya perdido algún aviso durante el corte:
+          // corregimos los números contra la base antes de seguir.
+          if (seConectoAlgunaVez && cargaInicialLista){
+            sincronizarConBase();
+          }
+          seConectoAlgunaVez = true;
+        } else if (estado === "CHANNEL_ERROR" || estado === "TIMED_OUT" || estado === "CLOSED"){
+          canalConectado = false;
+          actualizarEstadoConexion();
+          setTimeout(conectarRealtime, 3000);
+        }
+      });
+  }
+
+  // El punto solo se pone verde ("en vivo") cuando se cumplen dos cosas a
+  // la vez: el canal en vivo está conectado Y ya terminó de cargar el
+  // historial de hoy. Si solo se cumple la primera, seguimos diciendo
+  // "cargando…" para no mostrar "en vivo" con los paneles todavía vacíos.
+  function actualizarEstadoConexion(){
+    const dot = document.getElementById("dot");
+    const txt = document.getElementById("statusText");
+    if (!cargaInicialLista){
+      dot.className = "";
+      txt.textContent = "cargando…";
+    } else if (canalConectado){
+      dot.className = "live";
+      txt.textContent = "en vivo";
+    } else {
+      dot.className = "";
+      txt.textContent = "reconectando…";
+    }
+  }
+
+  // ---------- Procesar buffer cada 500ms ----------
+  function procesarBuffer(animar){
+    // revisar cambio de día
+    const hoyAhora = fechaLocalHoy();
+    if (hoyAhora !== state.diaLocal){
+      reiniciarPorNuevoDia();
+      return;
+    }
+
+    if (pendienteBuffer.length === 0) return;
+
+    const lote = pendienteBuffer;
+    pendienteBuffer = [];
+
+    let huboNuevas = false;
+    for (const fila of lote){
+      if (fila.id <= state.maxIdVisto) continue; // ya contada antes
+      aplicarVentaAAgregados(fila);
+      agregarAReciente(fila, true);
+      huboNuevas = true;
+    }
+
+    if (huboNuevas){
+      state.tieneDatos = true;
+      renderTodo(animar);
+      if (animar) pulsarVivo();
+    }
+  }
+
+  function iniciarLoopDeRender(){
+    setInterval(() => procesarBuffer(true), FLUSH_MS);
+  }
+
+  // El navegador enlentece a propósito los temporizadores (setInterval) de
+  // una pestaña minimizada o tapada por otra ventana, para ahorrar batería.
+  // Si eso pasa, el tablero se puede atrasar mientras nadie lo ve. Para que
+  // se ponga al día apenas alguien vuelve a mirar la pantalla —y no un
+  // rato después, cuando el navegador decida retomar el ritmo normal—
+  // forzamos una actualización inmediata en cuanto la pestaña vuelve a
+  // estar visible.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && cargaInicialLista){
+      procesarBuffer(false);
+      sincronizarConBase();
+    }
+  });
+
+  function reiniciarPorNuevoDia(){
+    state.ventas = 0;
+    state.facturacion = 0;
+    state.unidades = 0;
+    state.porHora = new Array(24).fill(0);
+    state.porComuna = new Map();
+    state.porFuente = new Map();
+    state.recientes = [];
+    state.diaLocal = fechaLocalHoy();
+    state.tieneDatos = false;
+    renderTodo(false);
+  }
+
+  function pulsarVivo(){
+    const dot = document.getElementById("dot");
+    dot.classList.add("flash");
+    setTimeout(() => { dot.classList.remove("flash"); dot.classList.add("live"); }, 400);
+
+    document.querySelectorAll(".kpi .value").forEach(el => {
+      el.classList.add("flash");
+      setTimeout(() => el.classList.remove("flash"), 700);
+    });
+  }
+
+  // ---------- Render ----------
+  function renderTodo(animarRecientes){
+    renderKpis();
+    renderHourly();
+    renderComunas();
+    renderFuentes();
+    renderRecientes(animarRecientes);
+  }
+
+  function renderKpis(){
+    const vEl = document.getElementById("kpiVentas");
+    const fEl = document.getElementById("kpiFacturacion");
+    const tEl = document.getElementById("kpiTicket");
+    const uEl = document.getElementById("kpiUnidades");
+    if (state.cargando){
+      vEl.textContent = "—";
+      fEl.textContent = "—";
+      tEl.textContent = "—";
+      uEl.textContent = "—";
+      return;
+    }
+    if (!state.tieneDatos){
+      vEl.textContent = "0";
+      fEl.textContent = "$0";
+      tEl.textContent = "$0";
+      uEl.textContent = "0";
+      return;
+    }
+    vEl.textContent = formatoEntero(state.ventas);
+    fEl.textContent = formatoPesosAbrev(state.facturacion);
+    tEl.textContent = formatoPesosAbrev(state.ventas ? Math.round(state.facturacion / state.ventas) : 0);
+    uEl.textContent = formatoEntero(state.unidades);
+  }
+
+  function renderHourly(){
+    const body = document.getElementById("hourlyBody");
+    if (state.cargando){
+      body.innerHTML = '<div class="empty">Cargando ventas de hoy…</div>';
+      return;
+    }
+    if (!state.tieneDatos){
+      body.innerHTML = '<div class="empty">Todavía no hay ventas hoy</div>';
+      return;
+    }
+    const horaActual = new Date().getHours();
+    const maxVal = Math.max(1, ...state.porHora);
+    let html = '<div id="hourlyChart">';
+    for (let h = 0; h < 24; h++){
+      const val = state.porHora[h];
+      const alturaPct = Math.max(2, Math.round((val / maxVal) * 100));
+      const esAhora = h === horaActual;
+      html += `<div class="hbar-col" title="${h}h — ${formatoPesosAbrev(val)}">
+        <div class="hbar${esAhora ? ' now' : ''}" style="height:${alturaPct}%"></div>
+        <div class="hbar-label">${h % 3 === 0 ? h + 'h' : ''}</div>
+      </div>`;
+    }
+    html += "</div>";
+    body.innerHTML = html;
+  }
+
+  function renderTopLista(mapa, contenedorId, totalParaPct){
+    const body = document.getElementById(contenedorId);
+    if (state.cargando){
+      body.innerHTML = '<div class="empty">Cargando ventas de hoy…</div>';
+      return;
+    }
+    if (!state.tieneDatos || mapa.size === 0){
+      body.innerHTML = '<div class="empty">Todavía no hay datos hoy</div>';
+      return;
+    }
+    const items = [...mapa.entries()].sort((a,b) => b[1] - a[1]).slice(0, 5);
+    const max = items[0][1];
+    let html = '<div class="barlist">';
+    for (const [nombre, valor] of items){
+      const pct = Math.round((valor / max) * 100);
+      const pctTotal = totalParaPct ? Math.round((valor / totalParaPct) * 100) : null;
+      html += `<div class="barlist-row">
+        <div class="barlist-top">
+          <span class="barlist-name">${escapeHtml(nombre)}</span>
+          <span class="barlist-val">${formatoEntero(valor)}${pctTotal !== null ? " · " + pctTotal + "%" : ""}</span>
+        </div>
+        <div class="barlist-track"><div class="barlist-fill" style="width:${pct}%"></div></div>
+      </div>`;
+    }
+    html += "</div>";
+    body.innerHTML = html;
+  }
+
+  function renderComunas(){
+    renderTopLista(state.porComuna, "comunasBody", null);
+  }
+
+  function renderFuentes(){
+    const totalFuentes = [...state.porFuente.values()].reduce((a,b) => a+b, 0);
+    renderTopLista(state.porFuente, "fuentesBody", totalFuentes);
+  }
+
+  function renderRecientes(animar){
+    const body = document.getElementById("recientesBody");
+    if (state.cargando){
+      body.innerHTML = '<div class="empty">Cargando ventas de hoy…</div>';
+      return;
+    }
+    if (!state.tieneDatos || state.recientes.length === 0){
+      body.innerHTML = '<div class="empty">Todavía no hay ventas registradas hoy — el sistema está a la espera</div>';
+      return;
+    }
+    let html = `<table>
+      <thead><tr>
+        <th>Hora</th><th>Comuna</th><th>Origen</th><th>Unid.</th><th class="col-total">Total</th>
+      </tr></thead><tbody>`;
+    for (const v of state.recientes){
+      html += `<tr class="${v._nueva && animar ? 'nuevo' : ''}">
+        <td>${formatoHora(v.ocurrido_en)}</td>
+        <td>${escapeHtml(v.ciudad || "—")}</td>
+        <td>${escapeHtml(v.fuente || "—")}</td>
+        <td>${formatoEntero(v.unidades || 0)}</td>
+        <td class="col-total">${formatoPesosAbrev(v.total || 0)}</td>
+      </tr>`;
+    }
+    html += "</tbody></table>";
+    body.innerHTML = html;
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[c]));
+  }
+
+  // ---------- Arranque ----------
+  async function iniciar(){
+    // 1) abrir el canal en vivo primero, para no perder ventas que entren
+    //    mientras se hace la consulta de historial
+    conectarRealtime();
+
+    // 2) consulta normal con el historial de hoy
+    try {
+      const filas = await cargarHistorialDeHoy();
+      reemplazarEstadoConSnapshot(filas);
+    } catch (e) {
+      // sin datos visibles de error: se muestra estado vacío/ordenado igual
+      console.error("Error cargando historial:", e);
+    }
+
+    state.cargando = false;
+    cargaInicialLista = true;
+    renderTodo(false);
+    actualizarEstadoConexion();
+    iniciarLoopDeRender();
+
+    // 3) además de los avisos en vivo, cada cierto tiempo recalculamos todo
+    //    desde la base: así, si algún aviso se perdió (ráfaga muy grande,
+    //    corte de conexión), el tablero se autocorrige solo en vez de
+    //    quedar con un número más chico que el real para siempre.
+    setInterval(sincronizarConBase, 30000);
+  }
+
+  iniciar();
+})();
+</script>
+</body>
+</html>
